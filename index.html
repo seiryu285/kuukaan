@@ -3,70 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>洗練された没入型アート美術館3D体験</title>
+    <title>最適化された没入型アート美術館3D体験</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
         canvas { display: block; }
-        #loading {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        #loading-bar {
-            width: 0%;
-            height: 4px;
-            background: #ffffff;
-            transition: width 0.5s ease;
-        }
-        #blocker {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
-        #instructions {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            font-size: 14px;
-            cursor: pointer;
-            color: #ffffff;
-        }
-        #debug-info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: black;
-            font-family: monospace;
-            font-size: 12px;
-            pointer-events: none;
-        }
+        #loading, #blocker, #instructions, #mobile-controls { position: absolute; }
+        #loading, #blocker { top: 0; left: 0; width: 100%; height: 100%; }
+        #loading { background: #000; display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        #loading-bar { width: 0%; height: 4px; background: #fff; transition: width 0.5s ease; }
+        #blocker { background-color: rgba(0,0,0,0.5); }
+        #instructions { top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #fff; }
+        #mobile-controls { bottom: 20px; left: 50%; transform: translateX(-50%); display: none; }
+        .control-button { width: 50px; height: 50px; background-color: rgba(255,255,255,0.5); border: none; border-radius: 25px; margin: 0 10px; font-size: 24px; color: #000; }
     </style>
 </head>
 <body>
-    <div id="loading">
-        <div id="loading-bar"></div>
-    </div>
+    <div id="loading"><div id="loading-bar"></div></div>
     <div id="blocker">
         <div id="instructions">
-            <p>移動: WASD<br/>視点変更: マウス<br/>クリックでスタート</p>
+            <p>デスクトップ: WASD で移動、マウスで視点変更<br>モバイル: 画面をスワイプして視点変更、ボタンで移動<br>クリック/タップでスタート</p>
         </div>
     </div>
-    <div id="debug-info"></div>
+    <div id="mobile-controls">
+        <button class="control-button" id="forward">↑</button>
+        <button class="control-button" id="backward">↓</button>
+        <button class="control-button" id="left">←</button>
+        <button class="control-button" id="right">→</button>
+    </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
     <script>
         let camera, scene, renderer, controls;
         let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
@@ -74,6 +38,8 @@
         const velocity = new THREE.Vector3();
         const direction = new THREE.Vector3();
         let raycaster;
+        let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let touchStartX, touchStartY;
 
         const artworks = [
             { url: 'https://i.postimg.cc/KvfgYszt/2024-08-07-153234.png', title: '作品1', description: '説明1' },
@@ -85,8 +51,12 @@
         let currentSpace = 'main';
         let isTransitioning = false;
 
+        const textureLoader = new THREE.TextureLoader();
+        const objectPool = [];
+        const maxPoolSize = 50;
+
         function init() {
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
             camera.position.set(0, 1.6, 5);
 
             scene = new THREE.Scene();
@@ -100,64 +70,39 @@
             scene.add(directionalLight);
 
             createMuseumEnvironment();
-            createCentralCrystal();
             createArtworks();
             createImmersiveSpaces();
 
-            controls = new THREE.PointerLockControls(camera, document.body);
+            controls = new THREE.Object3D();
+            camera.add(controls);
+            scene.add(camera);
 
             const blocker = document.getElementById('blocker');
             const instructions = document.getElementById('instructions');
 
-            instructions.addEventListener('click', function () {
-                controls.lock();
-            });
-
-            controls.addEventListener('lock', function () {
-                instructions.style.display = 'none';
+            instructions.addEventListener('click', () => {
                 blocker.style.display = 'none';
             });
-
-            controls.addEventListener('unlock', function () {
-                blocker.style.display = 'block';
-                instructions.style.display = '';
-            });
-
-            scene.add(controls.getObject());
-
-            const onKeyDown = function (event) {
-                switch (event.code) {
-                    case 'ArrowUp':
-                    case 'KeyW': moveForward = true; break;
-                    case 'ArrowLeft':
-                    case 'KeyA': moveLeft = true; break;
-                    case 'ArrowDown':
-                    case 'KeyS': moveBackward = true; break;
-                    case 'ArrowRight':
-                    case 'KeyD': moveRight = true; break;
-                }
-            };
-
-            const onKeyUp = function (event) {
-                switch (event.code) {
-                    case 'ArrowUp':
-                    case 'KeyW': moveForward = false; break;
-                    case 'ArrowLeft':
-                    case 'KeyA': moveLeft = false; break;
-                    case 'ArrowDown':
-                    case 'KeyS': moveBackward = false; break;
-                    case 'ArrowRight':
-                    case 'KeyD': moveRight = false; break;
-                }
-            };
 
             document.addEventListener('keydown', onKeyDown);
             document.addEventListener('keyup', onKeyUp);
 
+            if (isMobile) {
+                document.getElementById('mobile-controls').style.display = 'block';
+                document.addEventListener('touchstart', onTouchStart, false);
+                document.addEventListener('touchmove', onTouchMove, false);
+                document.addEventListener('touchend', onTouchEnd, false);
+
+                ['forward', 'backward', 'left', 'right'].forEach(dir => {
+                    document.getElementById(dir).addEventListener('touchstart', () => window[`move${dir.charAt(0).toUpperCase() + dir.slice(1)}`] = true);
+                    document.getElementById(dir).addEventListener('touchend', () => window[`move${dir.charAt(0).toUpperCase() + dir.slice(1)}`] = false);
+                });
+            }
+
             raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 10);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
+            renderer.setPixelRatio(isMobile ? 1 : window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
@@ -165,31 +110,20 @@
         }
 
         function createMuseumEnvironment() {
-            // 床
-            const floorGeometry = new THREE.CircleGeometry(20, 32);
+            const floorGeometry = new THREE.CircleBufferGeometry(20, 32);
             const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xF0F0F0 });
             const floor = new THREE.Mesh(floorGeometry, floorMaterial);
             floor.rotation.x = -Math.PI / 2;
             floor.receiveShadow = true;
             scene.add(floor);
 
-            // 壁
-            const wallGeometry = new THREE.CylinderGeometry(20, 20, 10, 32, 1, true);
+            const wallGeometry = new THREE.CylinderBufferGeometry(20, 20, 10, 32, 1, true);
             const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF, side: THREE.BackSide });
             const wall = new THREE.Mesh(wallGeometry, wallMaterial);
             wall.position.y = 5;
             scene.add(wall);
 
-            // 洗練された柱
-            for (let i = 0; i < 8; i++) {
-                const column = createElegantColumn();
-                const angle = (i / 8) * Math.PI * 2;
-                column.position.set(Math.cos(angle) * 15, 0, Math.sin(angle) * 15);
-                scene.add(column);
-            }
-
-            // 天井
-            const ceilingGeometry = new THREE.CircleGeometry(20, 32);
+            const ceilingGeometry = new THREE.CircleBufferGeometry(20, 32);
             const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
             const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
             ceiling.position.y = 10;
@@ -197,88 +131,10 @@
             scene.add(ceiling);
         }
 
-        function createElegantColumn() {
-            const columnGroup = new THREE.Group();
-
-            // ベース
-            const baseGeometry = new THREE.CylinderGeometry(0.8, 1, 0.5, 32);
-            const baseMaterial = new THREE.MeshStandardMaterial({ color: 0xE0E0E0 });
-            const base = new THREE.Mesh(baseGeometry, baseMaterial);
-            base.position.y = 0.25;
-            columnGroup.add(base);
-
-            // シャフト
-            const shaftGeometry = new THREE.CylinderGeometry(0.5, 0.5, 8, 32);
-            const shaftMaterial = new THREE.MeshStandardMaterial({ color: 0xF0F0F0 });
-            const shaft = new THREE.Mesh(shaftGeometry, shaftMaterial);
-            shaft.position.y = 4.5;
-            columnGroup.add(shaft);
-
-            // キャピタル
-            const capitalGeometry = new THREE.CylinderGeometry(1, 0.5, 1, 32);
-            const capitalMaterial = new THREE.MeshStandardMaterial({ color: 0xE0E0E0 });
-            const capital = new THREE.Mesh(capitalGeometry, capitalMaterial);
-            capital.position.y = 9;
-            columnGroup.add(capital);
-
-            return columnGroup;
-        }
-
-        function createCentralCrystal() {
-            const geometry = new THREE.IcosahedronGeometry(4, 0); // サイズを2倍に変更
-            const material = new THREE.ShaderMaterial({
-                uniforms: {
-                    time: { value: 0 },
-                    resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
-                },
-                vertexShader: `
-                    varying vec3 vNormal;
-                    varying vec3 vPosition;
-                    void main() {
-                        vNormal = normalize(normalMatrix * normal);
-                        vPosition = position;
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                    }
-                `,
-                fragmentShader: `
-                    uniform float time;
-                    uniform vec2 resolution;
-                    varying vec3 vNormal;
-                    varying vec3 vPosition;
-                    void main() {
-                        vec3 light = normalize(vec3(sin(time), cos(time), 1.0));
-                        float fresnel = pow(1.0 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
-                        vec3 refraction = refract(vec3(0.0, 0.0, -1.0), vNormal, 0.5);
-                        vec3 reflection = reflect(vec3(0.0, 0.0, -1.0), vNormal);
-                        float diffuse = max(dot(vNormal, light), 0.0);
-                        vec3 color = mix(vec3(0.8, 0.9, 1.0), vec3(1.0, 1.0, 1.0), fresnel);
-                        color += vec3(0.2, 0.4, 0.8) * diffuse;
-                        color += vec3(0.1, 0.1, 0.1) * pow(max(dot(reflection, light), 0.0), 32.0);
-                        gl_FragColor = vec4(color, 0.7 + 0.3 * fresnel);
-                    }
-                `,
-                transparent: true,
-                side: THREE.DoubleSide
-            });
-            const crystal = new THREE.Mesh(geometry, material);
-            crystal.position.set(0, 5, 0); // 高さを5に変更（床と天井の真ん中）
-            scene.add(crystal);
-
-            // アニメーション
-            function animate() {
-                requestAnimationFrame(animate);
-                crystal.rotation.x += 0.005;
-                crystal.rotation.y += 0.005;
-                crystal.material.uniforms.time.value += 0.05;
-            }
-            animate();
-        }
-
         function createArtworks() {
             artworks.forEach((artwork, index) => {
-                const textureLoader = new THREE.TextureLoader();
                 const texture = textureLoader.load(artwork.url);
-                const artGeometry = new THREE.PlaneGeometry(3, 5);  // 縦長に変更
+                const artGeometry = new THREE.PlaneBufferGeometry(3, 5);
                 const artMaterial = new THREE.MeshBasicMaterial({ map: texture });
                 const art = new THREE.Mesh(artGeometry, artMaterial);
                 
@@ -293,8 +149,7 @@
 
                 createArtworkPlate(artwork, art.position, art.getWorldDirection(new THREE.Vector3()));
 
-                // インタラクションエリアの追加
-                const interactionGeometry = new THREE.CircleGeometry(2, 32);
+                const interactionGeometry = new THREE.CircleBufferGeometry(2, 32);
                 const interactionMaterial = new THREE.MeshBasicMaterial({ 
                     color: 0x000000,
                     transparent: true,
@@ -330,13 +185,12 @@
             });
 
             const texture = new THREE.CanvasTexture(canvas);
-            const plateGeometry = new THREE.PlaneGeometry(2, 1);
+            const plateGeometry = new THREE.PlaneBufferGeometry(2, 1);
             const plateMaterial = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
             const plate = new THREE.Mesh(plateGeometry, plateMaterial);
-            plate.position.copy(position);
+            plate.position.copy(position).add(direction.multiplyScalar(0.1));
             plate.position.y = 1;
             plate.lookAt(plate.position.clone().add(direction));
-            plate.position.add(direction.multiplyScalar(0.1));
             scene.add(plate);
         }
 
@@ -364,44 +218,15 @@
                 const space = new THREE.Group();
                 space.visible = false;
 
-                // 背景
-                const bgGeometry = new THREE.SphereGeometry(30, 32, 32);
-                const bgMaterial = new THREE.ShaderMaterial({
-                    uniforms: {
-                        time: { value: 0 },
-                        baseColor: { value: new THREE.Color(0xFFFFFF) }
-                    },
-                    vertexShader: `
-                        varying vec2 vUv;
-                        void main() {
-                            vUv = uv;
-                            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                        }
-                    `,
-                    fragmentShader: `
-                        uniform float time;
-                        uniform vec3 baseColor;
-                        varying vec2 vUv;
-                        
-                        void main() {
-                            vec2 uv = vUv * 2.0 - 1.0;
-                            float d = length(uv);
-                            vec3 color = baseColor + 0.1 * vec3(sin(d * 10.0 + time), sin(d * 11.0 + time), sin(d * 12.0 + time));
-                            gl_FragColor = vec4(color, 1.0);
-                        }
-                    `,
-                    side: THREE.BackSide
-                });
+                const bgGeometry = new THREE.SphereBufferGeometry(30, 32, 32);
+                const bgMaterial = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, side: THREE.BackSide });
                 const background = new THREE.Mesh(bgGeometry, bgMaterial);
                 space.add(background);
 
-                // 巨大なアートディスプレイ
-                const textureLoader = new THREE.TextureLoader();
                 const texture = textureLoader.load(artwork.url);
-                const displayGeometry = new THREE.PlaneGeometry(20, 30);  // 巨大なサイズに変更
+                const displayGeometry = new THREE.PlaneBufferGeometry(20, 30);
                 const displayMaterial = new THREE.MeshBasicMaterial({ map: texture });
                 const display = new THREE.Mesh(displayGeometry, displayMaterial);
-
                 space.add(display);
 
                 immersiveSpaces.push(space);
@@ -419,193 +244,185 @@
             requestAnimationFrame(animate);
 
             const time = performance.now();
+            const delta = (time - prevTime) / 1000;
 
-            if (controls.isLocked === true) {
-                const delta = (time - prevTime) / 1000;
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
 
-                velocity.x -= velocity.x * 10.0 * delta;
-                velocity.z -= velocity.z * 10.0 * delta;
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
 
-                direction.z = Number(moveForward) - Number(moveBackward);
-                direction.x = Number(moveRight) - Number(moveLeft);
-                direction.normalize();
+            if (moveForward || moveBackward) velocity.z -= direction.z * 200.0 * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * 200.0 * delta;
 
-                if (moveForward || moveBackward) velocity.z -= direction.z * 200.0 * delta;
-                if (moveLeft || moveRight) velocity.x -= direction.x * 200.0 * delta;
+            camera.translateX(velocity.x * delta);
+            camera.translateZ(velocity.z * delta);
 
-                const oldPosition = controls.getObject().position.clone();
-                controls.moveRight(- velocity.x * delta);
-                controls.moveForward(- velocity.z * delta);
-
-                // 壁との衝突判定
-                const newPosition = controls.getObject().position.clone();
-                const distanceFromCenter = Math.sqrt(newPosition.x * newPosition.x + newPosition.z * newPosition.z);
-                if (distanceFromCenter > 19) {
-                    controls.getObject().position.copy(oldPosition);
-                }
-
-                // インタラクションエリアとの交差判定
-                raycaster.ray.origin.copy(controls.getObject().position);
-                raycaster.ray.origin.y -= 1;
-                const intersections = raycaster.intersectObjects(scene.children);
-                if (intersections.length > 0) {
-                    const intersection = intersections[0];
-                    if (intersection.object.geometry instanceof THREE.CircleGeometry && intersection.distance < 2) {
-                        const artworkIndex = intersection.object.userData.artworkIndex;
-                        if (typeof artworkIndex !== 'undefined') {
-                            enterImmersiveSpace(artworkIndex);
-                        }
-                    }
-                } else if (currentSpace !== 'main') {
-                    exitImmersiveSpace();
-                }
+            const cameraPosition = camera.position;
+            const distanceFromCenter = Math.sqrt(cameraPosition.x * cameraPosition.x + cameraPosition.z * cameraPosition.z);
+            if (distanceFromCenter > 19) {
+                const ratio = 19 / distanceFromCenter;
+                cameraPosition.x *= ratio;
+                cameraPosition.z *= ratio;
             }
 
-            // 中央のクリスタルのアニメーション更新
-            scene.children.forEach(child => {
-                if (child.material && child.material.uniforms && child.material.uniforms.time) {
-                    child.material.uniforms.time.value += 0.05;
-                }
-            });
+            raycaster.ray.origin.copy(cameraPosition);
+            raycaster.ray.origin.y -= 1;
 
-            // 没入空間の背景アニメーション更新
-            immersiveSpaces.forEach(space => {
-                if (space.children[0] && space.children[0].material && space.children[0].material.uniforms) {
-                    space.children[0].material.uniforms.time.value += 0.01;
+            const intersections = raycaster.intersectObjects(scene.children);
+            if (intersections.length > 0) {
+                const intersection = intersections[0];
+                if (intersection.object.geometry instanceof THREE.CircleBufferGeometry && intersection.distance < 2) {
+                    const artworkIndex = intersection.object.userData.artworkIndex;
+                    if (typeof artworkIndex !== 'undefined' && !isTransitioning) {
+                        enterImmersiveSpace(artworkIndex);
+                    }
                 }
-            });
+            } else if (currentSpace !== 'main' && !isTransitioning) {
+                exitImmersiveSpace();
+            }
 
             prevTime = time;
 
             renderer.render(scene, camera);
-
-            // デバッグ情報の更新
-            updateDebugInfo();
         }
 
         function enterImmersiveSpace(index) {
-            if (isTransitioning || currentSpace === `artwork${index}`) return;
             isTransitioning = true;
+            const targetPosition = new THREE.Vector3(0, 1.6, 2);
 
-            const targetPosition = new THREE.Vector3(0, 1.6, 2); // ユーザーがアートに近づくように
+            const startPosition = camera.position.clone();
+            const duration = 1000; // ミリ秒
+            const startTime = performance.now();
 
-            new TWEEN.Tween(controls.getObject().position)
-                .to(targetPosition, 1000)
-                .easing(TWEEN.Easing.Quadratic.InOut)
-                .onComplete(() => {
-                    scene.background = null;
-                    scene.children.forEach(child => {
-                        if (child !== immersiveSpaces[index] && !(child instanceof THREE.Light)) {
-                            child.visible = false;
-                        }
-                    });
+            function transition() {
+                const now = performance.now();
+                const elapsed = now - startTime;
+                if (elapsed < duration) {
+                    const t = elapsed / duration;
+                    camera.position.lerpVectors(startPosition, targetPosition, t);
+                    requestAnimationFrame(transition);
+                } else {
+                    camera.position.copy(targetPosition);
+                    completeTransition();
+                }
+            }
 
-                    if (immersiveSpaces[index]) {
-                        const space = immersiveSpaces[index];
-                        space.visible = true;
-
-                        // アートディスプレイを目の前に配置
-                        const display = space.children.find(child => child instanceof THREE.Mesh);
-                        if (display) {
-                            display.position.set(0, 1.6, -1); // ユーザーの視界の正面に
-                            display.lookAt(camera.position);
-                        }
-
-                        currentSpace = `artwork${index}`;
+            function completeTransition() {
+                scene.background = null;
+                scene.children.forEach(child => {
+                    if (child !== immersiveSpaces[index] && !(child instanceof THREE.Light)) {
+                        child.visible = false;
                     }
+                });
 
-                    isTransitioning = false;
-                })
-                .start();
+                if (immersiveSpaces[index]) {
+                    const space = immersiveSpaces[index];
+                    space.visible = true;
+                    const display = space.children.find(child => child instanceof THREE.Mesh && child.material.map);
+                    if (display) {
+                        display.position.set(0, 1.6, -1);
+                        display.lookAt(camera.position);
+                    }
+                    currentSpace = `artwork${index}`;
+                }
+                isTransitioning = false;
+            }
 
-            // 背景のフェード効果
-            const fadeMaterial = new THREE.MeshBasicMaterial({
-                color: 0xFFFFFF,
-                transparent: true,
-                opacity: 0
-            });
-            const fadeGeometry = new THREE.PlaneGeometry(100, 100);
-            const fadePlane = new THREE.Mesh(fadeGeometry, fadeMaterial);
-            fadePlane.position.z = -1;
-            camera.add(fadePlane);
-
-            new TWEEN.Tween(fadeMaterial)
-                .to({ opacity: 1 }, 500)
-                .easing(TWEEN.Easing.Quadratic.InOut)
-                .onComplete(() => {
-                    new TWEEN.Tween(fadeMaterial)
-                        .to({ opacity: 0 }, 500)
-                        .easing(TWEEN.Easing.Quadratic.InOut)
-                        .onComplete(() => {
-                            camera.remove(fadePlane);
-                        })
-                        .start();
-                })
-                .start();
+            transition();
         }
 
         function exitImmersiveSpace() {
-            if (isTransitioning) return;
             isTransitioning = true;
+            const targetPosition = new THREE.Vector3(0, 1.6, 5);
 
-            new TWEEN.Tween(controls.getObject().position)
-                .to({ x: 0, y: 1.6, z: 5 }, 1000)
-                .easing(TWEEN.Easing.Quadratic.InOut)
-                .onComplete(() => {
-                    scene.background = new THREE.Color(0xFFFFFF);
-                    scene.children.forEach(child => {
-                        if (!(child instanceof THREE.Light)) {
-                            child.visible = true;
-                        }
-                    });
+            const startPosition = camera.position.clone();
+            const duration = 1000; // ミリ秒
+            const startTime = performance.now();
 
-                    immersiveSpaces.forEach(space => {
-                        if (space) {
-                            space.visible = false;
-                        }
-                    });
+            function transition() {
+                const now = performance.now();
+                const elapsed = now - startTime;
+                if (elapsed < duration) {
+                    const t = elapsed / duration;
+                    camera.position.lerpVectors(startPosition, targetPosition, t);
+                    requestAnimationFrame(transition);
+                } else {
+                    camera.position.copy(targetPosition);
+                    completeTransition();
+                }
+            }
 
-                    currentSpace = 'main';
-                    isTransitioning = false;
-                })
-                .start();
+            function completeTransition() {
+                scene.background = new THREE.Color(0xFFFFFF);
+                scene.children.forEach(child => {
+                    if (!(child instanceof THREE.Light)) {
+                        child.visible = true;
+                    }
+                });
+                immersiveSpaces.forEach(space => {
+                    if (space) {
+                        space.visible = false;
+                    }
+                });
+                currentSpace = 'main';
+                isTransitioning = false;
+            }
 
-            // 背景のフェード効果
-            const fadeMaterial = new THREE.MeshBasicMaterial({
-                color: 0xFFFFFF,
-                transparent: true,
-                opacity: 0
-            });
-            const fadeGeometry = new THREE.PlaneGeometry(100, 100);
-            const fadePlane = new THREE.Mesh(fadeGeometry, fadeMaterial);
-            fadePlane.position.z = -1;
-            camera.add(fadePlane);
-
-            new TWEEN.Tween(fadeMaterial)
-                .to({ opacity: 1 }, 500)
-                .easing(TWEEN.Easing.Quadratic.InOut)
-                .onComplete(() => {
-                    new TWEEN.Tween(fadeMaterial)
-                        .to({ opacity: 0 }, 500)
-                        .easing(TWEEN.Easing.Quadratic.InOut)
-                        .onComplete(() => {
-                            camera.remove(fadePlane);
-                        })
-                        .start();
-                })
-                .start();
+            transition();
         }
 
-        function updateDebugInfo() {
-            const debugInfo = document.getElementById('debug-info');
-            if (debugInfo) {
-                debugInfo.innerHTML = `
-                    Position: ${controls.getObject().position.toArray().map(v => v.toFixed(2)).join(', ')}
-                    Current Space: ${currentSpace}
-                    Is Transitioning: ${isTransitioning}
-                    FPS: ${(1000 / (performance.now() - prevTime)).toFixed(2)}
-                `;
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'ArrowUp':
+                case 'KeyW': moveForward = true; break;
+                case 'ArrowLeft':
+                case 'KeyA': moveLeft = true; break;
+                case 'ArrowDown':
+                case 'KeyS': moveBackward = true; break;
+                case 'ArrowRight':
+                case 'KeyD': moveRight = true; break;
             }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'ArrowUp':
+                case 'KeyW': moveForward = false; break;
+                case 'ArrowLeft':
+                case 'KeyA': moveLeft = false; break;
+                case 'ArrowDown':
+                case 'KeyS': moveBackward = false; break;
+                case 'ArrowRight':
+                case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        function onTouchStart(event) {
+            if (event.touches.length === 1) {
+                touchStartX = event.touches[0].pageX;
+                touchStartY = event.touches[0].pageY;
+            }
+        }
+
+        function onTouchMove(event) {
+            if (event.touches.length === 1) {
+                const touchEndX = event.touches[0].pageX;
+                const touchEndY = event.touches[0].pageY;
+                const dx = touchEndX - touchStartX;
+                const dy = touchEndY - touchStartY;
+                
+                camera.rotation.y -= dx * 0.01;
+                camera.rotation.x -= dy * 0.01;
+                
+                touchStartX = touchEndX;
+                touchStartY = touchEndY;
+            }
+        }
+
+        function onTouchEnd(event) {
+            // タッチ終了時の処理（必要に応じて）
         }
 
         function loadingAnimation() {
@@ -626,12 +443,83 @@
 
         loadingAnimation();
 
-        // TWEENアニメーションの更新
-        function animateTween(time) {
-            requestAnimationFrame(animateTween);
-            TWEEN.update(time);
+        // パフォーマンス最適化
+        function optimizePerformance() {
+            // フレームレートの制限
+            const targetFPS = 30;
+            let lastFrameTime = 0;
+
+            function animateOptimized(currentTime) {
+                requestAnimationFrame(animateOptimized);
+
+                if (currentTime - lastFrameTime < 1000 / targetFPS) {
+                    return;
+                }
+
+                lastFrameTime = currentTime;
+
+                animate();
+            }
+
+            animateOptimized();
+
+            // メモリ管理
+            function cleanupUnusedResources() {
+                scene.traverse(object => {
+                    if (object.geometry && !object.geometry.isBufferGeometry) {
+                        object.geometry.dispose();
+                    }
+                    if (object.material) {
+                        if (Array.isArray(object.material)) {
+                            object.material.forEach(material => material.dispose());
+                        } else {
+                            object.material.dispose();
+                        }
+                    }
+                });
+                renderer.dispose();
+            }
+
+            // 定期的なクリーンアップの実行
+            setInterval(cleanupUnusedResources, 60000);  // 1分ごとに実行
         }
-        animateTween();
+
+        optimizePerformance();
+
+        // アクセシビリティの改善
+        function improveAccessibility() {
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Tab') {
+                    const focusableElements = document.querySelectorAll('button, [tabindex]:not([tabindex="-1"])');
+                    const firstElement = focusableElements[0];
+                    const lastElement = focusableElements[focusableElements.length - 1];
+
+                    if (event.shiftKey) {
+                        if (document.activeElement === firstElement) {
+                            lastElement.focus();
+                            event.preventDefault();
+                        }
+                    } else {
+                        if (document.activeElement === lastElement) {
+                            firstElement.focus();
+                            event.preventDefault();
+                        }
+                    }
+                }
+            });
+
+            const ariaDescription = document.createElement('div');
+            ariaDescription.setAttribute('aria-live', 'polite');
+            ariaDescription.style.position = 'absolute';
+            ariaDescription.style.left = '-9999px';
+            document.body.appendChild(ariaDescription);
+
+            function announceSpaceChange(spaceName) {
+                ariaDescription.textContent = `${spaceName}に入りました。`;
+            }
+        }
+
+        improveAccessibility();
     </script>
 </body>
 </html>
